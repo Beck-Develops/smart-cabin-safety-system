@@ -1,9 +1,10 @@
 // src/components/DashboardCharts.js
 import React, { useEffect, useState, useMemo } from 'react';
-import { Doughnut, Line } from 'react-chartjs-2';
+import { Doughnut, Line, } from 'react-chartjs-2';
 import { query, orderByKey, limitToLast, ref, onValue } from 'firebase/database';
 import database from '../firebaseConfig';
-import { pushTemperatureReading } from '../utils/firebaseHelpers';
+//import { pushTemperatureReading } from '../utils/firebaseHelpers';
+import AlertFrequencyChart from './AlertFrequencyChart';
 import {
     Chart as ChartJS,
     ArcElement,
@@ -14,6 +15,7 @@ import {
     LinearScale,
     PointElement,
     LineElement,
+    BarElement,
 } from 'chart.js';
 
 
@@ -26,7 +28,8 @@ ChartJS.register(
     CategoryScale,
     LinearScale,
     PointElement,
-    LineElement
+    LineElement,
+    BarElement
 );
 
 const DashboardCharts = ({ deviceId }) => {
@@ -226,20 +229,21 @@ const DashboardCharts = ({ deviceId }) => {
                     <p>Loading temperature data...</p>
                 )}
             </div>
-            <button
-                onClick={() => pushTemperatureReading(deviceId, (20 + Math.random() * 10).toFixed(1))}
+            {/* 3. Alert Frequency Bar Chart */}
+            <div
+                className="bar-card"
                 style={{
-                    marginTop: '15px',
-                    padding: '8px 14px',
-                    borderRadius: '6px',
-                    border: 'none',
-                    background: '#2196F3',
-                    color: '#fff',
-                    cursor: 'pointer',
+                    flex: '1 1 500px',
+                    maxWidth: '600px',
+                    background: '#fff',
+                    borderRadius: '12px',
+                    padding: '20px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                    minHeight: '350px' // Ensure minimum height is defined for the chart
                 }}
             >
-                Simulate Temperature Reading
-            </button>
+                <AlertFrequencyChart /> {/* <--- 3. RENDER THE NEW COMPONENT HERE */}
+            </div>
         </div>
     );
 };
