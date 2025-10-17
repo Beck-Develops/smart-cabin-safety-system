@@ -1,8 +1,9 @@
 // src/components/DashboardCharts.js
 import React, { useEffect, useState, useMemo } from 'react';
 import { Doughnut, Line } from 'react-chartjs-2';
-import { ref, onValue } from 'firebase/database';
+import { query, orderByKey, limitToLast, ref, onValue } from 'firebase/database';
 import database from '../firebaseConfig';
+import { pushTemperatureReading } from '../utils/firebaseHelpers';
 import {
     Chart as ChartJS,
     ArcElement,
@@ -29,6 +30,7 @@ ChartJS.register(
 );
 
 const DashboardCharts = ({ deviceId }) => {
+    const [temperatureData, setTemperatureData] = useState([]);
     const [healthScore, setHealthScore] = useState(0);
     const [totalDevices, setTotalDevices] = useState(0);
 
@@ -60,6 +62,32 @@ const DashboardCharts = ({ deviceId }) => {
 
         return () => unsubscribe();
     }, []);
+
+    // Fetch Temperature History from Firebase
+    useEffect(() => {
+        if (!deviceId) return;
+
+        const historyQuery = query(
+        ref(database, `TemperatureHistory/${deviceId}`),
+        orderByKey(),
+        limitToLast(24) // last 24 entries
+    );
+
+    const unsubscribe = onValue(historyQuery, (snapshot) => {
+        if (snapshot.exists()) {
+            const data = snapshot.val();
+            const entries = Object.entries(data).map(([timestamp, temp]) => ({
+                timestamp: new Date(timestamp).toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                }),
+                temperature: parseFloat(temp),
+            }));
+            setTemperatureData(entries);
+        }
+    });
+        return () => unsubscribe();
+    }, [deviceId]);
 
     // Memoize chart data to prevent flicker
     const gaugeData = useMemo(() => ({
@@ -103,32 +131,14 @@ const DashboardCharts = ({ deviceId }) => {
         maintainAspectRatio: false,
     };
 
-    // --- SIMULATED HISTORICAL DATA (Replace with Firebase Listener later) ---
-    const simulateHistoricalData = () => {
-        const data = [];
-        const now = Date.now();
-        for (let i = 24; i >= 0; i--) {
-            const time = new Date(now - (i * 3600000)); // 1 hour intervals
-            // Simulate a fluctuating temperature with a spike around 3PM
-            let temp = 20 + Math.sin(i / 4) * 5 + (i > 10 && i < 16 ? 5 : 0) + Math.random() * 2;
-
-            data.push({
-                timestamp: time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-                temperature: parseFloat(temp.toFixed(1)),
-            });
-        }
-        return data;
-    };
-
-    // --- Time-Series Data Structure ---
-    const historicalData = simulateHistoricalData(); // Call the simulation function
+    
 
     const lineChartData = useMemo(() => ({
-        labels: historicalData.map(d => d.timestamp),
+        labels: temperatureData.map(d => d.timestamp),
         datasets: [
             {
                 label: 'Temperature (°C)',
-                data: historicalData.map(d => d.temperature),
+                data: temperatureData.map(d => d.temperature),
                 borderColor: '#2196F3',
                 backgroundColor: 'rgba(33, 150, 243, 0.2)',
                 tension: 0.4,
@@ -136,22 +146,18 @@ const DashboardCharts = ({ deviceId }) => {
             },
             {
                 label: 'Safety Threshold (30°C)',
-                data: Array(historicalData.length).fill(30),
+                data: Array(temperatureData.length).fill(30),
                 borderColor: '#f44336',
                 borderDash: [5, 5],
                 pointRadius: 0,
-                tension: 0,
                 fill: false,
             },
         ],
-    }), [historicalData]);
+    }), [temperatureData]);
 
     const lineChartOptions = useMemo(() => ({
         plugins: {
-            title: {
-                display: true,
-                text: '24-Hour Temperature Trend & Safety Threshold',
-            },
+            title: { display: true, text: '24-Hour Temperature Trend' },
             legend: { position: 'bottom' },
         },
         scales: {
@@ -162,49 +168,81 @@ const DashboardCharts = ({ deviceId }) => {
             },
         },
         animation: { duration: 800, easing: 'easeOutQuart' },
+        responsive: true,
+        maintainAspectRatio: false,
     }), []);
 
 
     return (
-        <div className="dashboard-container" style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            justifyContent: 'center',
-            gap: '30px',
-            padding: '20px',
-        }}>
-            {/* Fleet Health Gauge */}
-            <div className="gauge-card" style={{
-                flex: '1 1 300px',
-                maxWidth: '350px',
-                background: '#fff',
-                borderRadius: '12px',
+        <div
+            className="dashboard-container"
+            style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                justifyContent: 'center',
+                gap: '30px',
                 padding: '20px',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-            }}>
+            }}
+        >
+            {/* Health Gauge */}
+            <div
+                className="gauge-card"
+                style={{
+                    flex: '1 1 300px',
+                    maxWidth: '350px',
+                    background: '#fff',
+                    borderRadius: '12px',
+                    padding: '20px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                }}
+            >
                 <h3>Fleet Operational Health</h3>
                 <div style={{ height: '250px', width: '100%' }}>
-                    <Doughnut data={gaugeData} options={gaugeOptions} />
+                    <Doughnut
+                        data={gaugeData} 
+                        options={gaugeOptions}
+                    />
                 </div>
                 <p style={{ textAlign: 'center', marginTop: '10px' }}>
                     Total Devices: {totalDevices}
                 </p>
             </div>
 
-            {/* Temperature Trend Line Chart */}
-            <div className="line-card" style={{
-                flex: '1 1 500px',
-                maxWidth: '600px',
-                background: '#fff',
-                borderRadius: '12px',
-                padding: '20px',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-            }}>
-                <Line data={lineChartData} options={lineChartOptions} />
+            {/* Temperature Line Chart */}
+            <div
+                className="line-card"
+                style={{
+                    flex: '1 1 500px',
+                    maxWidth: '600px',
+                    background: '#fff',
+                    borderRadius: '12px',
+                    padding: '20px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                }}
+            >
+                {temperatureData.length > 0 ? (
+                    <Line data={lineChartData} options={lineChartOptions} />
+                ) : (
+                    <p>Loading temperature data...</p>
+                )}
             </div>
+            <button
+                onClick={() => pushTemperatureReading(deviceId, (20 + Math.random() * 10).toFixed(1))}
+                style={{
+                    marginTop: '15px',
+                    padding: '8px 14px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: '#2196F3',
+                    color: '#fff',
+                    cursor: 'pointer',
+                }}
+            >
+                Simulate Temperature Reading
+            </button>
         </div>
     );
-
 };
+
 
 export default DashboardCharts;
