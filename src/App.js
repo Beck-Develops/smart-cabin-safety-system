@@ -1,5 +1,6 @@
 import React from 'react';
 import RealtimeDataStreamer from './components/RealtimeDataStreamer';
+import DashboardCharts from './components/DashboardCharts';
 import './App.css';
 
 function App() {
@@ -10,6 +11,7 @@ function App() {
       </header>
       <main>
         <RealtimeDataStreamer />
+        <DashboardCharts deviceId="car_001" />
       </main>
     </div>
   );
