@@ -1,0 +1,26 @@
+.alert-banner {
+  text-align: center;
+  padding: 15px;
+  font-size: 1.2em;
+  font-weight: bold;
+  border-radius: 8px;
+  margin-bottom: 15px;
+  transition: all 0.4s ease;
+}
+
+.status-ok {
+  background-color: #d9fdd3;
+  color: #0b6623;
+}
+
+.critical-danger {
+  background-color: #ff4d4d;
+  color: #fff;
+  animation: pulse 1.2s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.6; }
+  100% { opacity: 1; }
+}
