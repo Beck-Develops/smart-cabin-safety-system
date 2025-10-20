@@ -1,13 +1,12 @@
 // src/components/DashboardCharts.js
 import React, { useEffect, useState, useMemo } from 'react';
-import { Doughnut, Line, } from 'react-chartjs-2';
+import { Line, } from 'react-chartjs-2';
 import { query, orderByKey, limitToLast, ref, onValue } from 'firebase/database';
 import database from '../firebaseConfig';
 //import { pushTemperatureReading } from '../utils/firebaseHelpers';
 import AlertFrequencyChart from './AlertFrequencyChart';
-import {
-    Chart as ChartJS,
-    ArcElement,
+import RealtimeDataStreamer from '../components/RealtimeDataStreamer';
+import { Chart as ChartJS,ArcElement,
     Tooltip,
     Legend,
     Title,
@@ -34,37 +33,6 @@ ChartJS.register(
 
 const DashboardCharts = ({ deviceId }) => {
     const [temperatureData, setTemperatureData] = useState([]);
-    const [healthScore, setHealthScore] = useState(0);
-    const [totalDevices, setTotalDevices] = useState(0);
-
-    useEffect(() => {
-        const devicesRef = ref(database, 'Devices');
-
-        const unsubscribe = onValue(devicesRef, (snapshot) => {
-            if (snapshot.exists()) {
-                const devices = snapshot.val();
-                let reportingDevices = 0;
-                let totalCount = 0;
-                const oneMinuteAgo = Date.now() - 60000;
-
-                Object.keys(devices).forEach((key) => {
-                    totalCount++;
-                    const lastTimestamp = devices[key].timestamp;
-                    if (lastTimestamp && lastTimestamp > oneMinuteAgo) {
-                        reportingDevices++;
-                    }
-                });
-
-                setTotalDevices(totalCount);
-                if (totalCount > 0) {
-                    const score = Math.round((reportingDevices / totalCount) * 100);
-                    setHealthScore(score);
-                }
-            }
-        });
-
-        return () => unsubscribe();
-    }, []);
 
     // Fetch Temperature History from Firebase
     useEffect(() => {
@@ -91,50 +59,6 @@ const DashboardCharts = ({ deviceId }) => {
     });
         return () => unsubscribe();
     }, [deviceId]);
-
-    // Memoize chart data to prevent flicker
-    const gaugeData = useMemo(() => ({
-        labels: ['Reporting', 'Not Reporting'],
-        datasets: [
-            {
-                data: [healthScore, 100 - healthScore],
-                backgroundColor: ['#4CAF50', '#efefef'], // green & gray
-                borderWidth: 0,
-                hoverOffset: 0,
-            },
-        ],
-    }), [healthScore]);
-
-    // Animated gauge options
-    const gaugeOptions = {
-        circumference: 180,  // half-circle
-        rotation: -90,       // starts at bottom
-        cutout: '80%',
-        animation: {
-            duration: 1000,  // smooth 1s transition
-            easing: 'easeOutQuart'
-        },
-        plugins: {
-            legend: {
-                display: false,
-            },
-            title: {
-                display: true,
-                text: `Fleet Health: ${healthScore}%`,
-                padding: { top: 10, bottom: 10 },
-                font: { size: 18 }
-            },
-            tooltip: {
-                callbacks: {
-                    label: (context) => `${context.label}: ${context.parsed}%`,
-                },
-            },
-        },
-        responsive: true,
-        maintainAspectRatio: false,
-    };
-
-    
 
     const lineChartData = useMemo(() => ({
         labels: temperatureData.map(d => d.timestamp),
@@ -187,29 +111,7 @@ const DashboardCharts = ({ deviceId }) => {
                 padding: '20px',
             }}
         >
-            {/* Health Gauge */}
-            <div
-                className="gauge-card"
-                style={{
-                    flex: '1 1 300px',
-                    maxWidth: '350px',
-                    background: '#fff',
-                    borderRadius: '12px',
-                    padding: '20px',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-                }}
-            >
-                <h3>Fleet Operational Health</h3>
-                <div style={{ height: '250px', width: '100%' }}>
-                    <Doughnut
-                        data={gaugeData} 
-                        options={gaugeOptions}
-                    />
-                </div>
-                <p style={{ textAlign: 'center', marginTop: '10px' }}>
-                    Total Devices: {totalDevices}
-                </p>
-            </div>
+            <RealtimeDataStreamer />
 
             {/* Temperature Line Chart */}
             <div
