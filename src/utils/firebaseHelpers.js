@@ -2,74 +2,105 @@ import { get, ref, push, set } from 'firebase/database';
 import database from '../firebaseConfig';
 
 /**
- * Fetch historical temperature + humidity data for a specific device.
- * Reads from: Logs/{deviceId}
- * Each entry is expected to have fields: temp_c, humidity, and timestamp
+ * Fetch historical temp + humidity for a device from Logs/{deviceId}.
+ * - Accepts ISO strings, epoch millis, and old `millis()` (small numbers).
+ * - If it detects `millis()` rows, it aligns them to wall time so filters still work.
  */
-export const fetchHistoricalData = async (deviceId, startTimestamp, endTimestamp) => {
+export const fetchHistoricalData = async (deviceId, startTs, endTs) => {
   if (!deviceId) throw new Error('Missing deviceId');
 
-  try {
-    const dbRef = ref(database, `Logs/${deviceId}`);
-    const snapshot = await get(dbRef);
+  const snap = await get(ref(database, `Logs/${deviceId}`));
+  if (!snap.exists()) return [];
 
-    if (!snapshot.exists()) {
-      console.warn(`⚠️ No data found for device: ${deviceId}`);
-      return [];
+  const raw = Object.values(snap.val() || {});
+
+  // Parse and split by timestamp type
+  const EPOCH_THRESHOLD = 946684800000; // 2000-01-01
+  const isoOrEpoch = [];
+  const millisOnly = [];
+
+  for (const e of raw) {
+    const hasReading = e && (e.temp_c != null || e.humidity != null);
+    if (!hasReading || e.timestamp == null) continue;
+
+    let ts;
+    if (typeof e.timestamp === 'number') {
+      ts = e.timestamp;
+    } else {
+      const p = Date.parse(e.timestamp);
+      ts = Number.isFinite(p) ? p : null;
     }
+    if (ts == null) continue;
 
-    const allData = Object.values(snapshot.val());
+    const row = {
+      temp: e.temp_c ?? null,
+      humidity: e.humidity ?? null,
+      _ts: ts,
+    };
 
-    // Map Firebase structure → chart-friendly format
-    const dataPoints = allData
-      .filter(
-        (entry) =>
-          (entry.temp_c !== undefined || entry.humidity !== undefined) && entry.timestamp
-      )
-      .map((entry) => ({
-        temp: entry.temp_c ?? null,
-        humidity: entry.humidity ?? null,
-        time: entry.timestamp,
-      }))
-      .filter((entry) => {
-        const ts = new Date(entry.time).getTime();
-        if (startTimestamp && ts < startTimestamp) return false;
-        if (endTimestamp && ts > endTimestamp) return false;
-        return true;
-      })
-      .sort((a, b) => new Date(a.time) - new Date(b.time));
-
-    console.log(`✅ Fetched ${dataPoints.length} historical data points for ${deviceId}`);
-    return dataPoints;
-  } catch (err) {
-    console.error('❌ Error fetching historical data:', err);
-    throw err;
+    if (ts >= EPOCH_THRESHOLD) isoOrEpoch.push(row);
+    else millisOnly.push(row); // old `millis()`
   }
+
+  // Align millis()-based rows to wall time
+  if (millisOnly.length) {
+    const maxMillis = Math.max(...millisOnly.map(r => r._ts));
+    let anchorNow = Date.now();
+
+    // If we have real epoch rows too, align against them (better)
+    if (isoOrEpoch.length) {
+      const maxEpoch = Math.max(...isoOrEpoch.map(r => r._ts));
+      const offset = maxEpoch - maxMillis;
+      for (const r of millisOnly) r._ts = r._ts + offset;
+    } else {
+      // Otherwise align to "now" so newest millis() ≈ now
+      const offset = anchorNow - maxMillis;
+      for (const r of millisOnly) r._ts = r._ts + offset;
+    }
+  }
+
+  const all = [...isoOrEpoch, ...millisOnly]
+    .filter(r => {
+      if (startTs != null && r._ts < startTs) return false;
+      if (endTs != null && r._ts > endTs) return false;
+      return true;
+    })
+    .sort((a, b) => a._ts - b._ts)
+    .map(r => ({
+      temp: r.temp,
+      humidity: r.humidity,
+      time: new Date(r._ts).toISOString(),
+    }));
+
+  return all;
 };
 
 /**
- * Push a new temperature & humidity reading to Logs/{deviceId}.
- * Each log entry has auto-generated key and includes temp_c, humidity, and timestamp.
+ * Push temp + humidity (used by your web test sender).
+ * Uses ISO so it’s epoch-friendly.
  */
 export const pushTemperatureReading = async (deviceId, temperature, humidity) => {
   if (!deviceId) throw new Error('Missing deviceId');
+  const timestamp = new Date().toISOString();
+  const newRef = push(ref(database, `Logs/${deviceId}`));
+  await set(newRef, { temp_c: temperature, humidity: humidity ?? null, timestamp });
+};
 
-  try {
-    const timestamp = new Date().toISOString();
-    const logRef = ref(database, `Logs/${deviceId}`);
-    const newEntryRef = push(logRef);
+/**
+ * Optional helper to push full snapshot from web (test).
+ */
+export const pushEnvironmentalReading = async (deviceId, data) => {
+  if (!deviceId) throw new Error('Missing deviceId');
+  const {
+    temp_c = null,
+    humidity = null,
+    motion_detected = null,
+    motion_source = null,
+    safety_trigger = null,
+    led_state = null,
+    timestamp = new Date().toISOString(),
+  } = data;
 
-    await set(newEntryRef, {
-      temp_c: temperature,
-      humidity: humidity ?? null,
-      timestamp,
-    });
-
-    console.log(
-      `✅ Saved temperature: ${temperature}°C, humidity: ${humidity ?? 'N/A'}% at ${timestamp}`
-    );
-  } catch (err) {
-    console.error('❌ Error saving temperature reading:', err);
-    throw err;
-  }
+  const newRef = push(ref(database, `Logs/${deviceId}`));
+  await set(newRef, { temp_c, humidity, motion_detected, motion_source, safety_trigger, led_state, timestamp });
 };
