@@ -1,4 +1,3 @@
-// src/components/DashboardCharts.js
 import React, { useEffect, useState, useMemo } from 'react';
 import { Line } from 'react-chartjs-2';
 import { fetchHistoricalData } from '../utils/firebaseHelpers';
@@ -39,6 +38,7 @@ const DashboardCharts = ({ deviceId }) => {
   const [temperatureData, setTemperatureData] = useState([]);
   const [humidityData, setHumidityData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [startDate, setStartDate] = useState(null);
   const [endDate, setEndDate] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -69,13 +69,14 @@ const DashboardCharts = ({ deviceId }) => {
   useEffect(() => {
     if (!deviceId) return;
 
-    const loadData = async (start, end) => {
-      setLoading(true);
+    const loadData = async (start, end, isBackground = false) => {
+      if (isBackground) setIsRefreshing(true);
+      else setLoading(true);
+
       try {
         const data = await fetchHistoricalData(deviceId, start, end);
 
         if (Array.isArray(data) && data.length > 0) {
-          // Separate temp & humidity, convert temp to °F
           const temps = data
             .filter((d) => d.temp !== undefined)
             .map((d) => ({
@@ -99,22 +100,45 @@ const DashboardCharts = ({ deviceId }) => {
           setTemperatureData([]);
           setHumidityData([]);
         }
+
+        setLastUpdated(new Date());
       } catch (err) {
         console.error('❌ Error fetching historical data:', err);
       } finally {
-        setLoading(false);
-        setLastUpdated(new Date());
+        if (isBackground) setIsRefreshing(false);
+        else setLoading(false);
       }
     };
 
-    loadData(startDate?.getTime() || null, endDate?.getTime() || null);
+    // Initial load
+    loadData(startDate?.getTime() || null, endDate?.getTime() || null, false);
 
+    // Background refresh
     const interval = setInterval(() => {
-      loadData(startDate?.getTime() || null, endDate?.getTime() || null);
+      loadData(startDate?.getTime() || null, endDate?.getTime() || null, true);
     }, REFRESH_INTERVAL);
 
     return () => clearInterval(interval);
   }, [deviceId, startDate, endDate, intervalMinutes]);
+
+  // --- Dynamic axis scaling ---
+  const [tempMin, tempMax] = useMemo(() => {
+    if (temperatureData.length === 0) return [0, 100];
+    const vals = temperatureData.map((d) => d.value);
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const padding = (max - min) * 0.1 || 5;
+    return [min - padding, max + padding];
+  }, [temperatureData]);
+
+  const [humidMin, humidMax] = useMemo(() => {
+    if (humidityData.length === 0) return [0, 100];
+    const vals = humidityData.map((d) => d.value);
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const padding = (max - min) * 0.1 || 5;
+    return [min - padding, max + padding];
+  }, [humidityData]);
 
   // --- Chart Data ---
   const lineChartData = useMemo(
@@ -178,19 +202,27 @@ const DashboardCharts = ({ deviceId }) => {
           position: 'left',
           title: { display: true, text: 'Temperature (°F)' },
           grid: { color: 'rgba(255, 112, 67, 0.1)' },
+          min: tempMin,
+          max: tempMax,
         },
         yHumid: {
           type: 'linear',
           position: 'right',
           title: { display: true, text: 'Humidity (%)' },
           grid: { drawOnChartArea: false },
+          min: humidMin,
+          max: humidMax,
         },
       },
       animation: { duration: 800, easing: 'easeInOutQuad' },
       responsive: true,
       maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      },
     }),
-    []
+    [tempMin, tempMax, humidMin, humidMax]
   );
 
   // --- JSX ---
@@ -218,6 +250,7 @@ const DashboardCharts = ({ deviceId }) => {
           borderRadius: '12px',
           padding: '20px',
           boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          position: 'relative',
         }}
       >
         {/* Filters */}
@@ -252,29 +285,12 @@ const DashboardCharts = ({ deviceId }) => {
             <option value={30}>30 min</option>
             <option value={60}>1 hour</option>
           </select>
-
-          <button
-            onClick={() =>
-              startDate && endDate ? null : alert('Please select both start and end dates.')
-            }
-            style={{
-              marginLeft: '10px',
-              padding: '6px 12px',
-              borderRadius: '6px',
-              backgroundColor: '#1976d2',
-              color: '#fff',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            Filter
-          </button>
         </div>
 
         {/* Chart */}
         {loading ? (
           <p style={{ textAlign: 'center' }}>Loading temperature and humidity data...</p>
-        ) : temperatureData.length > 0 || humidityData.length > 0 ? (
+        ) : (
           <AnimatePresence mode="wait">
             <motion.div
               key={lastUpdated?.getTime() || 'chart'}
@@ -282,13 +298,38 @@ const DashboardCharts = ({ deviceId }) => {
               animate={{ opacity: 1, scaleY: 1 }}
               exit={{ opacity: 0, scaleY: 0.9 }}
               transition={{ duration: 0.6, ease: 'easeOut' }}
-              style={{ transformOrigin: 'bottom center', height: '350px' }}
+              style={{
+                transformOrigin: 'bottom center',
+                height: '350px',
+                position: 'relative',
+              }}
             >
               <Line data={lineChartData} options={lineChartOptions} />
+
+              {/* Overlay fade spinner during background refresh */}
+              {isRefreshing && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 0.6 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    backgroundColor: 'rgba(255,255,255,0.6)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '0.9em',
+                    color: '#444',
+                    borderRadius: '8px',
+                  }}
+                >
+                  🔄 Refreshing data...
+                </motion.div>
+              )}
             </motion.div>
           </AnimatePresence>
-        ) : (
-          <p style={{ textAlign: 'center' }}>No data available for this range.</p>
         )}
 
         {/* Last Updated */}

@@ -2,9 +2,9 @@ import { get, ref, push, set } from 'firebase/database';
 import database from '../firebaseConfig';
 
 /**
- * Fetch historical temperature data for a specific device.
- * Reads from Realtime Database path: Logs/{deviceId}
- * Each entry is expected to have fields: temp_c and timestamp
+ * Fetch historical temperature + humidity data for a specific device.
+ * Reads from: Logs/{deviceId}
+ * Each entry is expected to have fields: temp_c, humidity, and timestamp
  */
 export const fetchHistoricalData = async (deviceId, startTimestamp, endTimestamp) => {
   if (!deviceId) throw new Error('Missing deviceId');
@@ -22,9 +22,13 @@ export const fetchHistoricalData = async (deviceId, startTimestamp, endTimestamp
 
     // Map Firebase structure → chart-friendly format
     const dataPoints = allData
-      .filter((entry) => entry.temp_c !== undefined && entry.timestamp)
+      .filter(
+        (entry) =>
+          (entry.temp_c !== undefined || entry.humidity !== undefined) && entry.timestamp
+      )
       .map((entry) => ({
-        temp: entry.temp_c,
+        temp: entry.temp_c ?? null,
+        humidity: entry.humidity ?? null,
         time: entry.timestamp,
       }))
       .filter((entry) => {
@@ -44,10 +48,10 @@ export const fetchHistoricalData = async (deviceId, startTimestamp, endTimestamp
 };
 
 /**
- * Push a new temperature reading to Logs/{deviceId}.
- * Each log entry will have an auto-generated key and include temp_c + timestamp.
+ * Push a new temperature & humidity reading to Logs/{deviceId}.
+ * Each log entry has auto-generated key and includes temp_c, humidity, and timestamp.
  */
-export const pushTemperatureReading = async (deviceId, temperature) => {
+export const pushTemperatureReading = async (deviceId, temperature, humidity) => {
   if (!deviceId) throw new Error('Missing deviceId');
 
   try {
@@ -57,10 +61,13 @@ export const pushTemperatureReading = async (deviceId, temperature) => {
 
     await set(newEntryRef, {
       temp_c: temperature,
+      humidity: humidity ?? null,
       timestamp,
     });
 
-    console.log(`✅ Saved temperature: ${temperature}°C at ${timestamp}`);
+    console.log(
+      `✅ Saved temperature: ${temperature}°C, humidity: ${humidity ?? 'N/A'}% at ${timestamp}`
+    );
   } catch (err) {
     console.error('❌ Error saving temperature reading:', err);
     throw err;
