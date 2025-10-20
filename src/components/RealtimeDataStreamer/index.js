@@ -89,7 +89,12 @@ const RealtimeDataStreamer = () => {
     >
       <h2 style={{ color: '#4CAF50', textAlign: 'center' }}>Smart Cabin Dashboard</h2>
 
-      <p>🌡️ Temperature: {temp_c?.toFixed(1)}°C</p>
+      <p>🌡️ Temperature:{" "}
+        {temp_c !== undefined && temp_c !== null
+          ? ((temp_c * 9) / 5 + 32).toFixed(1)
+          : "--"}°F
+      </p>
+
       <p>💧 Humidity: {humidity?.toFixed(1)}%</p>
       <p>🎯 Motion: {motion_detected ? 'Detected' : 'None'}</p>
       <p>📍 Sensor: {motion_source}</p>
