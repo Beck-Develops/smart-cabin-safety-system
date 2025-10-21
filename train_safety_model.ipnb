@@ -1,0 +1,127 @@
+# 🧠 train_safety_model.ipynb
+# Train a prescriptive safety model with heat index (temperature + humidity)
+# Converts to TensorFlow.js for use in your React dashboard
+
+import tensorflow as tf
+import pandas as pd
+import numpy as np
+import json
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.utils import to_categorical
+import os
+
+# --- Step 1: Load your Firebase data ---
+data_path = "firebase_logs.json"  # replace with your exported Firebase file
+
+if data_path.endswith(".json"):
+    with open(data_path, "r") as f:
+        raw_data = json.load(f)
+
+    rows = []
+    for key, entry in raw_data.items():
+        rows.append({
+            "temp_c": entry.get("temp_c", np.nan),
+            "humidity": entry.get("humidity", np.nan),
+            "motion_detected": int(entry.get("motion_detected", 0)),
+            "safety_trigger": int(entry.get("safety_trigger", 0)),
+        })
+    df = pd.DataFrame(rows)
+else:
+    df = pd.read_csv(data_path)
+
+print("✅ Loaded dataset:", df.shape)
+print(df.head())
+
+# --- Step 2: Clean and filter invalid data ---
+df = df.dropna(subset=["temp_c", "humidity"])
+df = df[(df["temp_c"] > -10) & (df["temp_c"] < 80)]
+df = df[(df["humidity"] >= 0) & (df["humidity"] <= 100)]
+
+# --- Step 3: Compute heat index (approximation from NOAA formula) ---
+def compute_heat_index(temp_c, humidity):
+    # Convert Celsius to Fahrenheit
+    temp_f = temp_c * 9/5 + 32
+    hi_f = (
+        -42.379 + 2.04901523 * temp_f + 10.14333127 * humidity
+        - 0.22475541 * temp_f * humidity - 0.00683783 * temp_f**2
+        - 0.05481717 * humidity**2 + 0.00122874 * temp_f**2 * humidity
+        + 0.00085282 * temp_f * humidity**2 - 0.00000199 * temp_f**2 * humidity**2
+    )
+    # Convert back to Celsius
+    hi_c = (hi_f - 32) * 5/9
+    return hi_c
+
+df["heat_index"] = df.apply(lambda r: compute_heat_index(r["temp_c"], r["humidity"]), axis=1)
+
+# --- Step 4: Auto-label safety level ---
+def label_alert(row):
+    hi = row["heat_index"]
+    motion = row["motion_detected"]
+
+    if hi < 27:
+        return "Safe"
+    elif 27 <= hi < 32:
+        return "Warning"
+    elif hi >= 32 and hi < 37:
+        return "Danger" if motion else "Warning"
+    elif hi >= 37:
+        return "Emergency" if motion else "Danger"
+    else:
+        return "Safe"
+
+df["alert_level"] = df.apply(label_alert, axis=1)
+print("\n✅ Sample labeled data:")
+print(df.head())
+
+# --- Step 5: Prepare training data ---
+features = ["temp_c", "humidity", "motion_detected", "heat_index"]
+X = df[features].values
+y_labels = df["alert_level"].astype("category").cat.codes
+class_names = list(df["alert_level"].astype("category").cat.categories)
+print("\n📊 Class mapping:", dict(enumerate(class_names)))
+
+scaler = MinMaxScaler()
+X_scaled = scaler.fit_transform(X)
+
+y = to_categorical(y_labels, num_classes=len(class_names))
+
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+# --- Step 6: Build the neural network ---
+model = tf.keras.Sequential([
+    tf.keras.layers.Dense(8, activation="relu", input_shape=(4,)),  # now 4 features
+    tf.keras.layers.Dense(8, activation="relu"),
+    tf.keras.layers.Dense(len(class_names), activation="softmax")
+])
+
+model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
+
+history = model.fit(X_train, y_train, epochs=50, batch_size=8, validation_split=0.2)
+
+# --- Step 7: Evaluate model ---
+loss, acc = model.evaluate(X_test, y_test)
+print(f"\n✅ Model accuracy: {acc*100:.2f}%")
+
+# --- Step 8: Save for TensorFlow.js ---
+export_dir = "prescriptive_saved_model"
+model.save(export_dir)
+print("✅ Saved model to", export_dir)
+
+# Convert for TensorFlow.js
+!tensorflowjs_converter --input_format=tf_saved_model {export_dir} ./model_web
+
+print("\n✅ Conversion complete!")
+print("➡️ Copy ./model_web contents into your React app's /public/models/ folder")
+
+# --- Step 9: Save label map ---
+os.makedirs("model_web", exist_ok=True)
+with open("model_web/labels.json", "w") as f:
+    json.dump(class_names, f)
+print("✅ Saved label mapping to model_web/labels.json")
+
+# --- Step 10: Save the scaler for future normalization (optional) ---
+scaler_params = {"min": scaler.data_min_.tolist(), "max": scaler.data_max_.tolist()}
+with open("model_web/scaler.json", "w") as f:
+    json.dump(scaler_params, f)
+print("✅ Saved feature scaler to model_web/scaler.json")
